@@ -228,6 +228,13 @@ IDE_Morph.prototype.init = function (isAutoFill) {
 
     // override inherited properites:
     this.color = this.backgroundColor;
+
+    // initialize autosaving:
+    this.autoSaveCounter = null;
+    if (this.isAutoSave) {
+        console.log("Initializing AutoSave");
+        this.initializeAutoSave();
+    }
 };
 
 IDE_Morph.prototype.openIn = function (world) {
@@ -1721,6 +1728,7 @@ IDE_Morph.prototype.applySavedSettings = function () {
         click = this.getSetting('click'),
         longform = this.getSetting('longform'),
         plainprototype = this.getSetting('plainprototype');
+        isAutoSave = this.getSetting('isAutoSave');
 
     // design
     if (design === 'flat') {
@@ -1756,6 +1764,11 @@ IDE_Morph.prototype.applySavedSettings = function () {
     // plain prototype labels
     if (plainprototype) {
         BlockLabelPlaceHolderMorph.prototype.plainLabel = true;
+    }
+
+    // Autosaving
+    if (isAutoSave) {
+        this.isAutoSave = true;
     }
 };
 
@@ -2221,6 +2234,14 @@ IDE_Morph.prototype.settingsMenu = function () {
         'check for alternative\nGUI design',
         false
     );
+    addPreference(
+        'Autosaving',
+        'toggleAutoSave',
+        myself.isAutoSave,
+        'uncheck to not allow Snap! to automatically save changes',
+        'check to allow for Snap! to automatically save changes',
+        false
+        );
     addPreference(
         'Sprite Nesting',
         function () {
@@ -2731,44 +2752,57 @@ IDE_Morph.prototype.newProject = function () {
     this.fixLayout();
 };
 
-IDE_Morph.prototype.save = function () {
+IDE_Morph.prototype.save = function (isAutoSave) {
+    var name = this.projectName;
+    if (isAutoSave) {
+        name = name.concat('_autosave');
+    }
     if (this.source === 'examples') {
         this.source = 'local'; // cannot save to examples
     }
     if (this.projectName) {
         if (this.source === 'local') { // as well as 'examples'
-            this.saveProject(this.projectName);
+            this.saveProject(name, isAutoSave);
         } else { // 'cloud'
-            this.saveProjectToCloud(this.projectName);
+            this.saveProjectToCloud(name, isAutoSave);
         }
     } else {
         this.saveProjectsBrowser();
     }
 };
 
-
-IDE_Morph.prototype.saveProject = function (name) {
+IDE_Morph.prototype.saveProject = function (name, isAutoSave) {
     var myself = this;
     this.nextSteps([
         function () {
-            myself.showMessage('Saving...');
+            if (!isAutoSave) {
+                myself.showMessage('Saving...');
+            } else {
+                myself.showMessage('Autosaving...');
+            }
         },
         function () {
-            myself.rawSaveProject(name);
+            myself.rawSaveProject(name, isAutoSave);
         }
     ]);
 };
 
-IDE_Morph.prototype.rawSaveProject = function (name) {
+IDE_Morph.prototype.rawSaveProject = function (name, isAutoSave) {
     var str;
     if (name) {
-        this.setProjectName(name);
+        if (!isAutoSave) {
+            this.setProjectName(name);
+        }
         if (Process.prototype.isCatchingErrors) {
             try {
                 localStorage['-snap-project-' + name]
                     = str = this.serializer.serialize(this.stage);
                 location.hash = '#open:' + str;
-                this.showMessage('Saved!', 1);
+                if (!isAutoSave) {
+                    this.showMessage('Saved!', 1);
+                } else {
+                    this.showMessage('Autosaved!', 1);         
+                }
             } catch (err) {
                 this.showMessage('Save failed: ' + err);
             }
@@ -2776,7 +2810,9 @@ IDE_Morph.prototype.rawSaveProject = function (name) {
             localStorage['-snap-project-' + name]
                 = str = this.serializer.serialize(this.stage);
             location.hash = '#open:' + str;
-            this.showMessage('Saved!', 1);
+            if (!isAutoSave) {
+                this.showMessage('Saved!', 1);
+            }
         }
     }
 };
@@ -2805,6 +2841,30 @@ IDE_Morph.prototype.saveProjectToDisk = function () {
         document.body.removeChild(link);
     }
 };
+
+IDE_Morph.prototype.autoSave = function () {
+    console.log("trying");
+    console.log(this);
+    if (this.projectName) {
+        console.log("saving");
+        this.save(true);
+    }
+    console.log("tried");
+};
+
+IDE_Morph.prototype.initializeAutoSave = function () {
+    console.log("Beginning Autosaving");
+    var myself = this;
+    this.autoSaveCounter = setInterval(function () {myself.autoSave()}, 900000);
+};
+
+IDE_Morph.prototype.terminateAutoSave = function () {
+    console.log("terminating Autosave");
+    if (this.autosaving) {
+        clearInterval(this.autoSaveCounter);
+        this.autosaving = null;
+    }
+}
 
 IDE_Morph.prototype.exportProject = function (name, plain) {
     var menu, str;
@@ -3251,6 +3311,17 @@ IDE_Morph.prototype.togglePlainPrototypeLabels = function () {
         this.removeSetting('plainprototype');
     }
 };
+
+IDE_Morph.prototype.toggleAutoSave = function () {
+    this.isAutoSave = !this.isAutoSave;
+    if (this.isAutoSave) {
+        this.saveSetting('isAutoSave', true);
+        this.initializeAutoSave();
+    } else {
+        this.removeSetting('isAutoSave');
+        this.terminateAutoSave();
+    }
+}
 
 IDE_Morph.prototype.togglePreferEmptySlotDrops = function () {
     ScriptsMorph.prototype.isPreferringEmptySlots =
@@ -3802,14 +3873,22 @@ IDE_Morph.prototype.logout = function () {
     );
 };
 
-IDE_Morph.prototype.saveProjectToCloud = function (name) {
+IDE_Morph.prototype.saveProjectToCloud = function (name, isAutoSave) {
     var myself = this;
+    // INSERT SOMETHING IN ORDER TO MAKE THE MESSGE CHANGE IF AUTOSAVED
+    var cloudMessage = myself.showMessage('saved.', 2);
+    if (isAutoSave) {
+        cloudMessage = myself.showMessage('autosaved.', 2)
+        name = name.concat('_autosave');
+    }
     if (name) {
-        this.showMessage('Saving project\nto the cloud...');
+        if (!isAutoSave) {
+            this.showMessage('Saving project\nto the cloud...');
+        }
         this.setProjectName(name);
         SnapCloud.saveProject(
             this,
-            function () {myself.showMessage('saved.', 2); },
+            function () {cloudMessage; },
             this.cloudError()
         );
     }
